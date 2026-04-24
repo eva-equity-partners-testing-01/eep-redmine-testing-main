@@ -160,7 +160,77 @@ jobs:
               body: `## Redmine Ticket Validation Passed\n\nTicket **#${issueId}** verified in **${project}**.`
             });
 
-      - name: Add comment to Redmine ticket on PR opened or updated
+      - name: Write Redmine comment script for PR opened
+        if: |
+          steps.extract.outputs.found == 'true' &&
+          steps.check.outputs.project == steps.check.outputs.expected &&
+          github.event.action != 'closed'
+        run: |
+          cat > redmine_comment.py << 'PYEOF'
+          import os, json, urllib.request
+
+          issue_id    = os.environ['ISSUE_ID']
+          pr_number   = os.environ['PR_NUMBER']
+          pr_title    = os.environ['PR_TITLE']
+          pr_url      = os.environ['PR_URL']
+          pr_state    = os.environ['PR_STATE']
+          pr_author   = os.environ['PR_AUTHOR']
+          from_branch = os.environ['FROM_BRANCH']
+          to_branch   = os.environ['TO_BRANCH']
+          repo        = os.environ['REPO']
+          reviewers   = os.environ['REQUESTED_REVIEWERS']
+          all_reviews = os.environ['ALL_REVIEWS']
+          approvers   = os.environ['APPROVERS']
+          created_at  = os.environ['PR_CREATED_AT']
+          api_key     = os.environ['REDMINE_API_KEY']
+
+          lines = [
+            "### GitHub Pull Request Notification",
+            "",
+            "**Status:** PR " + pr_state,
+            "**PR Number:** #" + pr_number,
+            "**PR Title:** " + pr_title,
+            "**PR URL:** " + pr_url,
+            "",
+            "---",
+            "",
+            "**Branch Details:**",
+            "- **From Branch:** `" + from_branch + "`",
+            "- **To Branch:** `" + to_branch + "`",
+            "- **Repository:** `" + repo + "`",
+            "",
+            "---",
+            "",
+            "**People:**",
+            "- **PR Opened By:** @" + pr_author,
+            "- **Requested Reviewers:** " + reviewers,
+            "- **Reviews Submitted:** " + all_reviews,
+            "- **Approved By:** " + approvers,
+            "",
+            "---",
+            "",
+            "**Timeline:**",
+            "- **PR Created At:** " + created_at,
+            "",
+            "---",
+            "",
+            "_Added automatically by GitHub Actions webhook_"
+          ]
+
+          comment = "\n".join(lines)
+          payload = json.dumps({"issue": {"notes": comment}}).encode("utf-8")
+          url = "https://redmine.evaequitymtest.com/issues/" + issue_id + ".json"
+
+          req = urllib.request.Request(url, data=payload, method="PUT")
+          req.add_header("X-Redmine-API-Key", api_key)
+          req.add_header("Content-Type", "application/json")
+
+          with urllib.request.urlopen(req) as resp:
+            print("Redmine status: " + str(resp.status))
+            print("Ticket #" + issue_id + " updated successfully")
+          PYEOF
+
+      - name: Run Redmine comment script for PR opened
         if: |
           steps.extract.outputs.found == 'true' &&
           steps.check.outputs.project == steps.check.outputs.expected &&
@@ -180,68 +250,86 @@ jobs:
           APPROVERS: ${{ steps.reviewers.outputs.approvers }}
           PR_CREATED_AT: ${{ github.event.pull_request.created_at }}
           REDMINE_API_KEY: ${{ secrets.REDMINE_API_KEY }}
+        run: python3 redmine_comment.py
+
+      - name: Write Redmine comment script for PR closed or merged
+        if: |
+          steps.extract.outputs.found == 'true' &&
+          steps.check.outputs.project == steps.check.outputs.expected &&
+          github.event.action == 'closed'
         run: |
-          python3 << 'PYEOF'
+          cat > redmine_closed.py << 'PYEOF'
           import os, json, urllib.request
 
-          issue_id      = os.environ['ISSUE_ID']
-          pr_number     = os.environ['PR_NUMBER']
-          pr_title      = os.environ['PR_TITLE']
-          pr_url        = os.environ['PR_URL']
-          pr_state      = os.environ['PR_STATE']
-          pr_author     = os.environ['PR_AUTHOR']
-          from_branch   = os.environ['FROM_BRANCH']
-          to_branch     = os.environ['TO_BRANCH']
-          repo          = os.environ['REPO']
-          reviewers     = os.environ['REQUESTED_REVIEWERS']
-          all_reviews   = os.environ['ALL_REVIEWS']
-          approvers     = os.environ['APPROVERS']
-          created_at    = os.environ['PR_CREATED_AT']
-          api_key       = os.environ['REDMINE_API_KEY']
+          issue_id    = os.environ['ISSUE_ID']
+          pr_number   = os.environ['PR_NUMBER']
+          pr_title    = os.environ['PR_TITLE']
+          pr_url      = os.environ['PR_URL']
+          pr_author   = os.environ['PR_AUTHOR']
+          from_branch = os.environ['FROM_BRANCH']
+          to_branch   = os.environ['TO_BRANCH']
+          repo        = os.environ['REPO']
+          merged      = os.environ['MERGED']
+          merged_by   = os.environ.get('MERGED_BY', 'N/A')
+          merged_at   = os.environ.get('MERGED_AT', 'N/A')
+          closed_at   = os.environ.get('CLOSED_AT', 'N/A')
+          approvers   = os.environ['APPROVERS']
+          all_reviews = os.environ['ALL_REVIEWS']
+          api_key     = os.environ['REDMINE_API_KEY']
 
-          comment = f"""### GitHub Pull Request Notification
+          if merged == 'true':
+            status     = 'MERGED'
+            merge_info = ["- **Merged By:** @" + merged_by, "- **Merged At:** " + merged_at]
+          else:
+            status     = 'CLOSED WITHOUT MERGE'
+            merge_info = ["- **Closed At:** " + closed_at, "- **Merged:** No"]
 
-**Status:** PR {pr_state}
-**PR Number:** #{pr_number}
-**PR Title:** {pr_title}
-**PR URL:** {pr_url}
+          lines = [
+            "### GitHub Pull Request " + status,
+            "",
+            "**Status:** " + status,
+            "**PR Number:** #" + pr_number,
+            "**PR Title:** " + pr_title,
+            "**PR URL:** " + pr_url,
+            "",
+            "---",
+            "",
+            "**Branch Details:**",
+            "- **From Branch:** `" + from_branch + "`",
+            "- **To Branch:** `" + to_branch + "`",
+            "- **Repository:** `" + repo + "`",
+            "",
+            "---",
+            "",
+            "**People:**",
+            "- **PR Opened By:** @" + pr_author,
+            "- **Approved By:** " + approvers,
+            "- **All Reviews:** " + all_reviews,
+            "",
+            "---",
+            "",
+            "**Merge Details:**",
+          ] + merge_info + [
+            "",
+            "---",
+            "",
+            "_Added automatically by GitHub Actions webhook_"
+          ]
 
----
+          comment = "\n".join(lines)
+          payload = json.dumps({"issue": {"notes": comment}}).encode("utf-8")
+          url = "https://redmine.evaequitymtest.com/issues/" + issue_id + ".json"
 
-**Branch Details:**
-- **From Branch:** `{from_branch}`
-- **To Branch:** `{to_branch}`
-- **Repository:** `{repo}`
-
----
-
-**People:**
-- **PR Opened By:** @{pr_author}
-- **Requested Reviewers:** {reviewers}
-- **Reviews Submitted:** {all_reviews}
-- **Approved By:** {approvers}
-
----
-
-**Timeline:**
-- **PR Created At:** {created_at}
-
----
-
-_Added automatically by GitHub Actions webhook_"""
-
-          payload = json.dumps({"issue": {"notes": comment}}).encode('utf-8')
-          url = f"https://redmine.evaequitymtest.com/issues/{issue_id}.json"
-          req = urllib.request.Request(url, data=payload, method='PUT')
-          req.add_header('X-Redmine-API-Key', api_key)
-          req.add_header('Content-Type', 'application/json')
+          req = urllib.request.Request(url, data=payload, method="PUT")
+          req.add_header("X-Redmine-API-Key", api_key)
+          req.add_header("Content-Type", "application/json")
 
           with urllib.request.urlopen(req) as resp:
-              print(f"Redmine response status: {resp.status}")
-              print(f"Redmine ticket #{issue_id} updated successfully")
+            print("Redmine status: " + str(resp.status))
+            print("Ticket #" + issue_id + " updated with closed/merged comment")
           PYEOF
 
-      - name: Add comment to Redmine ticket on PR closed or merged
+      - name: Run Redmine comment script for PR closed or merged
         if: |
           steps.extract.outputs.found == 'true' &&
           steps.check.outputs.project == steps.check.outputs.expected &&
@@ -262,70 +350,4 @@ _Added automatically by GitHub Actions webhook_"""
           APPROVERS: ${{ steps.reviewers.outputs.approvers }}
           ALL_REVIEWS: ${{ steps.reviewers.outputs.all_reviews }}
           REDMINE_API_KEY: ${{ secrets.REDMINE_API_KEY }}
-        run: |
-          python3 << 'PYEOF'
-          import os, json, urllib.request
-
-          issue_id    = os.environ['ISSUE_ID']
-          pr_number   = os.environ['PR_NUMBER']
-          pr_title    = os.environ['PR_TITLE']
-          pr_url      = os.environ['PR_URL']
-          pr_author   = os.environ['PR_AUTHOR']
-          from_branch = os.environ['FROM_BRANCH']
-          to_branch   = os.environ['TO_BRANCH']
-          repo        = os.environ['REPO']
-          merged      = os.environ['MERGED']
-          merged_by   = os.environ.get('MERGED_BY', 'N/A')
-          merged_at   = os.environ.get('MERGED_AT', 'N/A')
-          closed_at   = os.environ.get('CLOSED_AT', 'N/A')
-          approvers   = os.environ['APPROVERS']
-          all_reviews = os.environ['ALL_REVIEWS']
-          api_key     = os.environ['REDMINE_API_KEY']
-
-          if merged == 'true':
-              status     = 'MERGED'
-              merge_info = f"- **Merged By:** @{merged_by}\n- **Merged At:** {merged_at}"
-          else:
-              status     = 'CLOSED WITHOUT MERGE'
-              merge_info = f"- **Closed At:** {closed_at}\n- **Merged:** No"
-
-          comment = f"""### GitHub Pull Request {status}
-
-**Status:** {status}
-**PR Number:** #{pr_number}
-**PR Title:** {pr_title}
-**PR URL:** {pr_url}
-
----
-
-**Branch Details:**
-- **From Branch:** `{from_branch}`
-- **To Branch:** `{to_branch}`
-- **Repository:** `{repo}`
-
----
-
-**People:**
-- **PR Opened By:** @{pr_author}
-- **Approved By:** {approvers}
-- **All Reviews:** {all_reviews}
-
----
-
-**Merge Details:**
-{merge_info}
-
----
-
-_Added automatically by GitHub Actions webhook_"""
-
-          payload = json.dumps({"issue": {"notes": comment}}).encode('utf-8')
-          url = f"https://redmine.evaequitymtest.com/issues/{issue_id}.json"
-          req = urllib.request.Request(url, data=payload, method='PUT')
-          req.add_header('X-Redmine-API-Key', api_key)
-          req.add_header('Content-Type', 'application/json')
-
-          with urllib.request.urlopen(req) as resp:
-              print(f"Redmine response status: {resp.status}")
-              print(f"Redmine ticket #{issue_id} updated with closed/merged comment")
-          PYEOF
+        run: python3 redmine_closed.py
