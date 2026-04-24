@@ -2,52 +2,41 @@ pipeline {
     agent any
 
     environment {
-        IMAGE_NAME = "fastapi-demo"
-        IMAGE_TAG  = "${BUILD_NUMBER}"
+        IMAGE_NAME   = "fastapi-demo"
+        IMAGE_TAG    = "${BUILD_NUMBER}"
+        GITHUB_TOKEN = credentials('github-token')
+        GITHUB_REPO  = "eva-equity-partners-testing-01/eep-redmine-testing-main"
     }
 
     stages {
 
-        stage('Step 1 - Git Checkout') {
+        stage('Checkout') {
             steps {
-                echo "🔃 Step 1: Git Checkout Started..."
                 checkout scm
-                echo "✅ Step 1: Git Checkout Completed"
             }
         }
 
-        stage('Step 2 - Deployment Notification') {
+        stage('Report Pending') {
             steps {
-                echo "🔔 Step 2: Deployment Started — Build #${BUILD_NUMBER}"
+                script {
+                    if (env.SHA) {
+                        sh """
+                            curl -s -X POST \\
+                            -H "Authorization: token ${GITHUB_TOKEN}" \\
+                            -H "Content-Type: application/json" \\
+                            -d '{"state":"pending","context":"continuous-integration/jenkins","description":"Build in progress...","target_url":"${BUILD_URL}"}' \\
+                            https://api.github.com/repos/${GITHUB_REPO}/statuses/${SHA}
+                        """
+                    }
+                }
             }
         }
 
-        stage('Step 3 - SonarQube Validation') {
+        stage('Build Docker Image') {
             steps {
-                echo "🔍 Step 3: SonarQube Validation Started..."
-                echo "✅ Step 3: SonarQube Validation Completed"
-            }
-        }
-
-        stage('Step 4 - Docker Build') {
-            steps {
-                echo "🐳 Step 4: Docker Build Started..."
-                sh "docker build -t ${IMAGE_NAME}:${IMAGE_TAG} ."
-                echo "✅ Step 4: Docker Build Completed — ${IMAGE_NAME}:${IMAGE_TAG}"
-            }
-        }
-
-        stage('Step 5 - Push to ECR') {
-            steps {
-                echo "📦 Step 5: Pushing Docker Image to ECR..."
-                echo "✅ Step 5: Image Pushed to ECR Successfully"
-            }
-        }
-
-        stage('Step 6 - Kubectl Set Image') {
-            steps {
-                echo "☸️  Step 6: Updating Kubernetes Deployment..."
-                echo "✅ Step 6: Kubectl Set Image Completed"
+                dir('fastapi-demo') {
+                    sh "docker build -t ${IMAGE_NAME}:${IMAGE_TAG} ."
+                }
             }
         }
 
@@ -55,11 +44,34 @@ pipeline {
 
     post {
         success {
-            echo "✅ Build #${BUILD_NUMBER} SUCCESS — All steps completed"
-            sh "docker rmi ${IMAGE_NAME}:${IMAGE_TAG} || true"
+            echo "✅ Build #${BUILD_NUMBER} SUCCESS"
+            script {
+                if (env.SHA) {
+                    sh """
+                        curl -s -X POST \\
+                        -H "Authorization: token ${GITHUB_TOKEN}" \\
+                        -H "Content-Type: application/json" \\
+                        -d '{"state":"success","context":"continuous-integration/jenkins","description":"Build passed! Ready to merge.","target_url":"${BUILD_URL}"}' \\
+                        https://api.github.com/repos/${GITHUB_REPO}/statuses/${SHA}
+                    """
+                }
+                sh "docker rmi ${IMAGE_NAME}:${IMAGE_TAG} || true"
+            }
         }
+
         failure {
-            echo "❌ Build #${BUILD_NUMBER} FAILED — Check logs above"
+            echo "❌ Build #${BUILD_NUMBER} FAILED"
+            script {
+                if (env.SHA) {
+                    sh """
+                        curl -s -X POST \\
+                        -H "Authorization: token ${GITHUB_TOKEN}" \\
+                        -H "Content-Type: application/json" \\
+                        -d '{"state":"failure","context":"continuous-integration/jenkins","description":"Build failed! Fix before merging.","target_url":"${BUILD_URL}"}' \\
+                        https://api.github.com/repos/${GITHUB_REPO}/statuses/${SHA}
+                    """
+                }
+            }
         }
     }
 }
