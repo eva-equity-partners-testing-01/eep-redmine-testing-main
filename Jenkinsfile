@@ -3,47 +3,98 @@ pipeline {
 
     stages {
 
-        stage('Deployment Start Notification') {
+        stage('Step 1: Deployment Start Notification') {
             steps {
-                echo 'STEP 1: Deployment Start Notification'
+                echo "Step 1: Deployment Start Notification - Started"
             }
         }
 
-        stage('Git Checkout') {
+        stage('Step 2: Git Checkout') {
             steps {
-                echo 'STEP 2: Git Checkout'
+                echo "Step 2: Git Checkout - Checking out branch features/152"
             }
         }
 
-        stage('SonarQube Scanner') {
+        stage('Step 3: SonarQube Scanner') {
+            when {
+                anyOf {
+                    changeRequest()
+                    branch 'features/*'
+                }
+            }
             steps {
-                echo 'STEP 3: SonarQube Scanner'
+                echo "Step 3: SonarQube Scanner - Running code quality scan"
             }
         }
 
-        stage('Docker Build') {
+        stage('Step 4: Docker Build') {
+            when {
+                anyOf {
+                    changeRequest()
+                    branch 'features/*'
+                }
+            }
             steps {
-                echo 'STEP 4: Docker Build'
+                echo "Step 4: Docker Build - Building Docker image"
             }
         }
 
-        stage('Docker Image Push to ECR') {
+        stage('Step 5: Docker Image Push to ECR') {
+            when {
+                anyOf {
+                    changeRequest()
+                    branch 'features/*'
+                }
+            }
             steps {
-                echo 'STEP 5: Docker Image Push to ECR'
+                echo "Step 5: Docker Image Push to ECR - Pushing image to registry"
             }
         }
 
-        stage('Kubectl Set Image') {
+        stage('Approve and Merge PR') {
+            when {
+                changeRequest target: 'develop'
+            }
             steps {
-                echo 'STEP 6: Kubectl Set Image'
+                echo "Step 1 to 5 completed successfully - Waiting for manual approval to merge PR features/152 into develop"
+                input message: 'All steps passed. Do you want to approve and merge this PR into develop?',
+                      ok: 'Approve & Merge'
+                echo "PR manually approved - Merging features/152 into develop"
             }
         }
 
-        stage('Deployment Completed Notification') {
+        stage('Step 6: Kubectl Set Image') {
+            when {
+                allOf {
+                    branch 'develop'
+                    not { changeRequest() }
+                }
+            }
             steps {
-                echo 'STEP 7: Deployment Completed Notification'
+                echo "Step 6: Kubectl Set Image - Updating Kubernetes deployment with new image"
             }
         }
 
+        stage('Step 7: Deployment Completed Notification') {
+            when {
+                allOf {
+                    branch 'develop'
+                    not { changeRequest() }
+                }
+            }
+            steps {
+                echo "Step 7: Deployment Completed Notification - Deployment finished successfully"
+            }
+        }
+
+    }
+
+    post {
+        failure {
+            echo "Pipeline FAILED - Sending failure notification"
+        }
+        success {
+            echo "Pipeline SUCCEEDED"
+        }
     }
 }
