@@ -33,17 +33,21 @@ pipeline {
             }
         }
 
-        stage('Kubectl Set Image') {
-            steps {
-                echo 'STEP 6: Kubectl Set Image'
+    }
+
+    post {
+        success {
+            script {
+                if (env.CHANGE_ID) {
+                    echo 'STEP 5 PASSED — PR build successful, ready to merge'
+                } else {
+                    echo 'STEP 6: Kubectl Set Image'
+                    echo 'STEP 7: Deployment Completed Notification — SUCCESS'
+                }
             }
         }
-
-        stage('Deployment Completed Notification') {
-            steps {
-                echo 'STEP 7: Deployment Completed Notification'
-            }
+        failure {
+            echo 'STEP 7: Deployment Notification — FAILED'
         }
-
     }
 }
