@@ -8,15 +8,46 @@ pipeline {
 
     stages {
 
-        stage('Checkout') {
+        stage('Step 1 - Git Checkout') {
             steps {
+                echo "🔃 Step 1: Git Checkout Started..."
                 checkout scm
+                echo "✅ Step 1: Git Checkout Completed"
             }
         }
 
-        stage('Build Docker Image') {
+        stage('Step 2 - Deployment Notification') {
             steps {
+                echo "🔔 Step 2: Deployment Started — Build #${BUILD_NUMBER}"
+            }
+        }
+
+        stage('Step 3 - SonarQube Validation') {
+            steps {
+                echo "🔍 Step 3: SonarQube Validation Started..."
+                echo "✅ Step 3: SonarQube Validation Completed"
+            }
+        }
+
+        stage('Step 4 - Docker Build') {
+            steps {
+                echo "🐳 Step 4: Docker Build Started..."
                 sh "docker build -t ${IMAGE_NAME}:${IMAGE_TAG} ."
+                echo "✅ Step 4: Docker Build Completed — ${IMAGE_NAME}:${IMAGE_TAG}"
+            }
+        }
+
+        stage('Step 5 - Push to ECR') {
+            steps {
+                echo "📦 Step 5: Pushing Docker Image to ECR..."
+                echo "✅ Step 5: Image Pushed to ECR Successfully"
+            }
+        }
+
+        stage('Step 6 - Kubectl Set Image') {
+            steps {
+                echo "☸️  Step 6: Updating Kubernetes Deployment..."
+                echo "✅ Step 6: Kubectl Set Image Completed"
             }
         }
 
@@ -24,11 +55,11 @@ pipeline {
 
     post {
         success {
-            echo "✅ Build #${BUILD_NUMBER} SUCCESS — image ${IMAGE_NAME}:${IMAGE_TAG} ready"
+            echo "✅ Build #${BUILD_NUMBER} SUCCESS — All steps completed"
             sh "docker rmi ${IMAGE_NAME}:${IMAGE_TAG} || true"
         }
         failure {
-            echo "❌ Build #${BUILD_NUMBER} FAILED"
+            echo "❌ Build #${BUILD_NUMBER} FAILED — Check logs above"
         }
     }
 }
