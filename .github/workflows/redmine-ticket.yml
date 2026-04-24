@@ -4,7 +4,7 @@ on:
   pull_request:
     branches:
       - develop
-    types: [opened, reopened, synchronize]
+    types: [opened, reopened, synchronize, closed]
 
 permissions:
   pull-requests: write
@@ -64,7 +64,47 @@ jobs:
             echo "expected=$PROJECT_NAME" >> $GITHUB_OUTPUT
           fi
 
-      - name: Post error comment
+      - name: Get PR reviewers and approvers
+        if: steps.extract.outputs.found == 'true'
+        id: reviewers
+        uses: actions/github-script@v7
+        with:
+          github-token: ${{ secrets.GITHUB_TOKEN }}
+          script: |
+            const pr = context.payload.pull_request;
+            const prNumber = pr.number;
+
+            // Get requested reviewers
+            const reviewRequests = await github.rest.pulls.listRequestedReviewers({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              pull_number: prNumber
+            });
+
+            const requestedReviewers = reviewRequests.data.users
+              .map(u => u.login).join(', ') || 'None';
+
+            // Get submitted reviews (approvals)
+            const reviews = await github.rest.pulls.listReviews({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              pull_number: prNumber
+            });
+
+            const approvers = reviews.data
+              .filter(r => r.state === 'APPROVED')
+              .map(r => r.user.login)
+              .join(', ') || 'No approvals yet';
+
+            const reviewers = reviews.data
+              .map(r => `${r.user.login} (${r.state})`)
+              .join(', ') || 'No reviews yet';
+
+            core.setOutput('requested_reviewers', requestedReviewers);
+            core.setOutput('approvers', approvers);
+            core.setOutput('all_reviews', reviewers);
+
+      - name: Post error comment on PR — wrong project
         if: |
           steps.extract.outputs.found == 'false' ||
           steps.check.outputs.project != steps.check.outputs.expected
@@ -105,7 +145,7 @@ jobs:
 
             core.setFailed('Redmine ticket validation failed');
 
-      - name: Post success comment
+      - name: Post success comment on PR — ticket verified
         if: |
           steps.extract.outputs.found == 'true' &&
           steps.check.outputs.project == steps.check.outputs.expected
@@ -115,16 +155,140 @@ jobs:
           script: |
             const issueId = '${{ steps.extract.outputs.issue_id }}';
             const project = '${{ steps.check.outputs.project }}';
+            const pr = context.payload.pull_request;
 
             await github.rest.issues.createComment({
               owner: context.repo.owner,
               repo: context.repo.repo,
-              issue_number: context.payload.pull_request.number,
-              body: [
-                `## Redmine Ticket Validation Passed`,
-                ``,
-                `Ticket **#${issueId}** has been verified in project **${project}**.`,
-                ``,
-                `This PR is correctly linked to the Redmine project.`
-              ].join('\n')
+              issue_number: pr.number,
+              body: `## Redmine Ticket Validation Passed\n\nTicket **#${issueId}** verified in **${project}**.`
             });
+
+      - name: Add comment to Redmine ticket — PR opened
+        if: |
+          steps.extract.outputs.found == 'true' &&
+          steps.check.outputs.project == steps.check.outputs.expected &&
+          github.event.action != 'closed'
+        run: |
+          ISSUE_ID="${{ steps.extract.outputs.issue_id }}"
+          PR_NUMBER="${{ github.event.pull_request.number }}"
+          PR_TITLE="${{ github.event.pull_request.title }}"
+          PR_URL="${{ github.event.pull_request.html_url }}"
+          PR_STATE="${{ github.event.action }}"
+          PR_AUTHOR="${{ github.event.pull_request.user.login }}"
+          FROM_BRANCH="${{ github.event.pull_request.head.ref }}"
+          TO_BRANCH="${{ github.event.pull_request.base.ref }}"
+          REPO="${{ github.repository }}"
+          REQUESTED_REVIEWERS="${{ steps.reviewers.outputs.requested_reviewers }}"
+          ALL_REVIEWS="${{ steps.reviewers.outputs.all_reviews }}"
+          APPROVERS="${{ steps.reviewers.outputs.approvers }}"
+          PR_CREATED_AT="${{ github.event.pull_request.created_at }}"
+
+          COMMENT="### GitHub Pull Request Notification
+
+**Status:** PR ${PR_STATE}
+**PR Number:** #${PR_NUMBER}
+**PR Title:** ${PR_TITLE}
+**PR URL:** ${PR_URL}
+
+---
+
+**Branch Details:**
+- **From Branch:** \`${FROM_BRANCH}\`
+- **To Branch:** \`${TO_BRANCH}\`
+- **Repository:** \`${REPO}\`
+
+---
+
+**People:**
+- **PR Opened By:** @${PR_AUTHOR}
+- **Requested Reviewers:** ${REQUESTED_REVIEWERS}
+- **Reviews Submitted:** ${ALL_REVIEWS}
+- **Approved By:** ${APPROVERS}
+
+---
+
+**Timeline:**
+- **PR Created At:** ${PR_CREATED_AT}
+
+---
+
+_Added automatically by GitHub Actions webhook_"
+
+          # Send comment to Redmine ticket
+          curl -s -X PUT \
+            -H "X-Redmine-API-Key: ${{ secrets.REDMINE_API_KEY }}" \
+            -H "Content-Type: application/json" \
+            -d "{\"issue\": {\"notes\": $(echo "$COMMENT" | python3 -c 'import sys,json; print(json.dumps(sys.stdin.read()))')}}" \
+            "https://redmine.evaequitymtest.com/issues/$ISSUE_ID.json"
+
+          echo "Redmine ticket #$ISSUE_ID updated with PR comment"
+
+      - name: Add comment to Redmine ticket — PR closed or merged
+        if: |
+          steps.extract.outputs.found == 'true' &&
+          steps.check.outputs.project == steps.check.outputs.expected &&
+          github.event.action == 'closed'
+        run: |
+          ISSUE_ID="${{ steps.extract.outputs.issue_id }}"
+          PR_NUMBER="${{ github.event.pull_request.number }}"
+          PR_TITLE="${{ github.event.pull_request.title }}"
+          PR_URL="${{ github.event.pull_request.html_url }}"
+          PR_AUTHOR="${{ github.event.pull_request.user.login }}"
+          FROM_BRANCH="${{ github.event.pull_request.head.ref }}"
+          TO_BRANCH="${{ github.event.pull_request.base.ref }}"
+          REPO="${{ github.repository }}"
+          MERGED="${{ github.event.pull_request.merged }}"
+          MERGED_BY="${{ github.event.pull_request.merged_by.login }}"
+          MERGED_AT="${{ github.event.pull_request.merged_at }}"
+          CLOSED_AT="${{ github.event.pull_request.closed_at }}"
+          APPROVERS="${{ steps.reviewers.outputs.approvers }}"
+          ALL_REVIEWS="${{ steps.reviewers.outputs.all_reviews }}"
+
+          if [ "$MERGED" == "true" ]; then
+            STATUS="MERGED"
+            MERGE_INFO="- **Merged By:** @${MERGED_BY}
+          - **Merged At:** ${MERGED_AT}"
+          else
+            STATUS="CLOSED WITHOUT MERGE"
+            MERGE_INFO="- **Closed At:** ${CLOSED_AT}
+          - **Merged:** No"
+          fi
+
+          COMMENT="### GitHub Pull Request ${STATUS}
+
+**Status:** ${STATUS}
+**PR Number:** #${PR_NUMBER}
+**PR Title:** ${PR_TITLE}
+**PR URL:** ${PR_URL}
+
+---
+
+**Branch Details:**
+- **From Branch:** \`${FROM_BRANCH}\`
+- **To Branch:** \`${TO_BRANCH}\`
+- **Repository:** \`${REPO}\`
+
+---
+
+**People:**
+- **PR Opened By:** @${PR_AUTHOR}
+- **Approved By:** ${APPROVERS}
+- **All Reviews:** ${ALL_REVIEWS}
+
+---
+
+**Merge Details:**
+${MERGE_INFO}
+
+---
+
+_Added automatically by GitHub Actions webhook_"
+
+          curl -s -X PUT \
+            -H "X-Redmine-API-Key: ${{ secrets.REDMINE_API_KEY }}" \
+            -H "Content-Type: application/json" \
+            -d "{\"issue\": {\"notes\": $(echo "$COMMENT" | python3 -c 'import sys,json; print(json.dumps(sys.stdin.read()))')}}" \
+            "https://redmine.evaequitymtest.com/issues/$ISSUE_ID.json"
+
+          echo "Redmine ticket #$ISSUE_ID updated with PR closed/merged comment"
