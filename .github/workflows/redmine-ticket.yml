@@ -6,86 +6,125 @@ on:
       - develop
     types: [opened, reopened, synchronize]
 
+permissions:
+  pull-requests: write
+  issues: write
+  contents: read
+
 jobs:
   validate-ticket:
     runs-on: ubuntu-latest
 
+    permissions:
+      pull-requests: write
+      issues: write
+      contents: read
+
     steps:
-      - name: Extract issue number from branch name
+      - name: Extract issue number from branch
         id: extract
         run: |
           BRANCH="${{ github.head_ref }}"
           echo "Branch name: $BRANCH"
           ISSUE_ID=$(echo "$BRANCH" | grep -oP '\d+')
+          echo "Extracted issue ID: $ISSUE_ID"
           if [ -z "$ISSUE_ID" ]; then
-            echo "No issue number found in branch name"
             echo "found=false" >> $GITHUB_OUTPUT
           else
             echo "issue_id=$ISSUE_ID" >> $GITHUB_OUTPUT
             echo "found=true" >> $GITHUB_OUTPUT
           fi
 
-      - name: Check ticket exists in Redmine Project1
+      - name: Check ticket in Redmine
         if: steps.extract.outputs.found == 'true'
         id: check
         run: |
           ISSUE_ID="${{ steps.extract.outputs.issue_id }}"
-          REDMINE_URL="https://redmine.evaequitymtest.com"
-          PROJECT_IDENTIFIER="Automatic Linking of PR"   # <-- your Redmine project identifier
+          PROJECT_NAME="Automatic Linking of PR"
+
+          echo "Checking Redmine for issue: $ISSUE_ID"
 
           RESPONSE=$(curl -s -o response.json -w "%{http_code}" \
             -H "X-Redmine-API-Key: ${{ secrets.REDMINE_API_KEY }}" \
-            "$REDMINE_URL/issues/$ISSUE_ID.json")
+            -H "Content-Type: application/json" \
+            "https://redmine.evaequitytest.com/issues/$ISSUE_ID.json")
 
           echo "HTTP status: $RESPONSE"
+          echo "Redmine response body:"
+          cat response.json
 
           if [ "$RESPONSE" == "200" ]; then
             PROJECT=$(cat response.json | python3 -c \
-              "import sys,json; print(json.load(sys.stdin)['issue']['project']['identifier'])")
-            echo "project=$PROJECT" >> $GITHUB_OUTPUT
+              "import sys,json; d=json.load(sys.stdin); print(d['issue']['project']['name'])")
             echo "Ticket belongs to project: $PROJECT"
+            echo "project=$PROJECT" >> $GITHUB_OUTPUT
+            echo "expected=$PROJECT_NAME" >> $GITHUB_OUTPUT
           else
             echo "project=not_found" >> $GITHUB_OUTPUT
+            echo "expected=$PROJECT_NAME" >> $GITHUB_OUTPUT
           fi
 
-      - name: Post error comment — ticket not found or wrong project
+      - name: Post error comment
         if: |
           steps.extract.outputs.found == 'false' ||
-          steps.check.outputs.project != 'project1'
+          steps.check.outputs.project != steps.check.outputs.expected
         uses: actions/github-script@v7
         with:
+          github-token: ${{ secrets.GITHUB_TOKEN }}
           script: |
-            const branch = context.payload.pull_request.head.ref;
             const issueId = '${{ steps.extract.outputs.issue_id }}';
-            const project = '${{ steps.check.outputs.project }}';
+            const foundProject = '${{ steps.check.outputs.project }}';
+            const branch = context.payload.pull_request.head.ref;
 
-            let message = '';
+            let msg = '';
             if ('${{ steps.extract.outputs.found }}' === 'false') {
-              message = `Branch name \`${branch}\` does not contain a valid Redmine ticket number.\n\nPlease rename your branch to follow the format: \`features/<ticket-id>\``;
+              msg = [
+                `Branch \`${branch}\` does not contain a valid Redmine ticket number.`,
+                ``,
+                `Please rename your branch to follow the format:`,
+                `\`features/<ticket-id>\``,
+                ``,
+                `Example: \`features/161\``
+              ].join('\n');
             } else {
-              message = `Ticket **#${issueId}** does not belong to **Project1**.\n\nFound in project: \`${project || 'not found'}\`\n\nThis PR must reference a ticket from **Project1** only.`;
+              msg = [
+                `Ticket **#${issueId}** was found in project \`${foundProject || 'not found'}\`.`,
+                ``,
+                `This PR must reference a ticket from the **Automatic Linking of PR** project only.`,
+                ``,
+                `Please make sure your branch references a valid ticket from the correct project.`
+              ].join('\n');
             }
 
             await github.rest.issues.createComment({
               owner: context.repo.owner,
               repo: context.repo.repo,
               issue_number: context.payload.pull_request.number,
-              body: `## Redmine Ticket Validation Failed\n\n${message}`
+              body: `## Redmine Ticket Validation Failed\n\n${msg}`
             });
 
             core.setFailed('Redmine ticket validation failed');
 
-      - name: Post success comment — ticket verified
+      - name: Post success comment
         if: |
           steps.extract.outputs.found == 'true' &&
-          steps.check.outputs.project == 'project1'
+          steps.check.outputs.project == steps.check.outputs.expected
         uses: actions/github-script@v7
         with:
+          github-token: ${{ secrets.GITHUB_TOKEN }}
           script: |
             const issueId = '${{ steps.extract.outputs.issue_id }}';
+            const project = '${{ steps.check.outputs.project }}';
+
             await github.rest.issues.createComment({
               owner: context.repo.owner,
               repo: context.repo.repo,
               issue_number: context.payload.pull_request.number,
-              body: `## Redmine Ticket Validation Passed\n\nTicket **#${issueId}** verified in **Project1**.\n\nThis PR is linked to the correct Redmine project.`
+              body: [
+                `## Redmine Ticket Validation Passed`,
+                ``,
+                `Ticket **#${issueId}** has been verified in project **${project}**.`,
+                ``,
+                `This PR is correctly linked to the Redmine project.`
+              ].join('\n')
             });
