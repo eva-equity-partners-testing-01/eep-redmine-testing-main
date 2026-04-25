@@ -3,7 +3,7 @@ pipeline {
  
     /*
     ─────────────────────────────────────────────────────────────
-     BRANCH STRATEGY
+     BRANCH STRATEGY 
        • PR opened / new commit pushed  → Stages 1-5  (CI only)
        • PR merged into develop         → Stages 1-6  (CI + Deploy)
 
