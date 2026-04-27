@@ -34,9 +34,8 @@ jobs:
       - name: Validate PR title (optional format)
         run: |
           TITLE="${{ github.event.pull_request.title }}"
-
-          # Optional validation: allow anything, but warn if no issue ID
-          if [[ "$TITLE" =~ #[0-9]+ ]]; then
+      
+          if echo "$TITLE" | grep -qE '#[0-9]+'; then
             echo "PR title contains issue reference: $TITLE"
           else
             echo "PR title does not contain issue ID (allowed): $TITLE"
