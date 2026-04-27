@@ -13,7 +13,7 @@ def process_data(lines):
         fruits.append(line.strip())
     return fruits
 
-def main():
+def main(): 
     filename = "fruits.txt"
     write_file(filename)
 
