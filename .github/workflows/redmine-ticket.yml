@@ -141,5 +141,5 @@ jobs:
               -H "X-Redmine-API-Key: ${{ secrets.REDMINE_API_KEY }}" \
               -H "Content-Type: application/json" \
               -d "{\"issue\": {\"status_id\": $STATUS_ID}}" \
-              "$REDMINE_URL/issues/$ISSUE_ID.json"
+              "$REDMINE_URL/issues/$ISSUE_ID.json" 
           fi
