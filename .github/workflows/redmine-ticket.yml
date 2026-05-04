@@ -168,58 +168,50 @@ jobs:
           ISSUE_ID="${{ steps.extract.outputs.issue_id }}"
           REDMINE_URL="${{ vars.REDMINE_URL }}"
 
-          COMMENT=$(cat <<EOF
-          GitHub Pull Request Notification
-          
-          Status: PR opened
-          PR Number: #${{ github.event.pull_request.number }}
-          PR Title: ${{ github.event.pull_request.title }}
-          PR URL: ${{ github.event.pull_request.html_url }}
-          
-          From Branch: ${{ github.event.pull_request.head.ref }}
-          To Branch: ${{ github.event.pull_request.base.ref }}
-          
-          PR Opened By: @${{ github.event.pull_request.user.login }}
-          EOF
-          )
-          
-                    curl -s -X PUT \
-                      -H "X-Redmine-API-Key: ${{ secrets.REDMINE_API_KEY }}" \
-                      -H "Content-Type: application/json" \
-                      -d "{\"issue\": {\"notes\": \"$COMMENT\"}}" \
-                      "$REDMINE_URL/issues/$ISSUE_ID.json"
-          
-                # 🔵 REDMINE NOTE - PR CLOSED / MERGED
-                - name: Add Redmine note (PR closed/merged)
-                  if: steps.flag.outputs.enabled == 'true' && github.event.action == 'closed'
-                  run: |
-                    ISSUE_ID="${{ steps.extract.outputs.issue_id }}"
-                    REDMINE_URL="${{ vars.REDMINE_URL }}"
-          
-                    if [ "${{ github.event.pull_request.merged }}" = "true" ]; then
-                      STATUS="MERGED"
-                    else
-                      STATUS="CLOSED"
-                    fi
-          
-                    COMMENT=$(cat <<EOF
-          GitHub Pull Request $STATUS
-          
-          Status: $STATUS
-          PR Number: #${{ github.event.pull_request.number }}
-          PR Title: ${{ github.event.pull_request.title }}
-          PR URL: ${{ github.event.pull_request.html_url }}
-          
-          From Branch: ${{ github.event.pull_request.head.ref }}
-          To Branch: ${{ github.event.pull_request.base.ref }}
-          
-          PR Opened By: @${{ github.event.pull_request.user.login }}
-          Approved By: ${{ steps.reviewers.outputs.approvers }}
-          EOF
-          )
-          
-                    curl -s -X PUT \
-                      -H "X-Redmine-API-Key: ${{ secrets.REDMINE_API_KEY }}" \
-                      -H "Content-Type: application/json" \
-                      -d "{\"issue\": {\"notes\": \"$COMMENT\"}}" \
-                      "$REDMINE_URL/issues/$ISSUE_ID.json"
+          python3 -c "
+          import json
+          payload = {
+              'issue': {
+                  'notes': 'GitHub Pull Request Notification\n\nStatus: PR opened\nPR Number: #${{ github.event.pull_request.number }}\nPR Title: ${{ github.event.pull_request.title }}\nPR URL: ${{ github.event.pull_request.html_url }}\n\nFrom Branch: ${{ github.event.pull_request.head.ref }}\nTo Branch: ${{ github.event.pull_request.base.ref }}\n\nPR Opened By: @${{ github.event.pull_request.user.login }}'
+              }
+          }
+          with open('payload.json', 'w') as f:
+              json.dump(payload, f)
+          "
+
+          curl -s -X PUT \
+            -H "X-Redmine-API-Key: ${{ secrets.REDMINE_API_KEY }}" \
+            -H "Content-Type: application/json" \
+            -d @payload.json \
+            "$REDMINE_URL/issues/$ISSUE_ID.json"
+
+      # 🔵 REDMINE NOTE - PR CLOSED / MERGED
+      - name: Add Redmine note (PR closed/merged)
+        if: steps.flag.outputs.enabled == 'true' && github.event.action == 'closed'
+        run: |
+          ISSUE_ID="${{ steps.extract.outputs.issue_id }}"
+          REDMINE_URL="${{ vars.REDMINE_URL }}"
+
+          if [ "${{ github.event.pull_request.merged }}" = "true" ]; then
+            STATUS="MERGED"
+          else
+            STATUS="CLOSED"
+          fi
+
+          python3 -c "
+          import json
+          status = '$STATUS'
+          payload = {
+              'issue': {
+                  'notes': f'GitHub Pull Request {status}\n\nStatus: {status}\nPR Number: #${{ github.event.pull_request.number }}\nPR Title: ${{ github.event.pull_request.title }}\nPR URL: ${{ github.event.pull_request.html_url }}\n\nFrom Branch: ${{ github.event.pull_request.head.ref }}\nTo Branch: ${{ github.event.pull_request.base.ref }}\n\nPR Opened By: @${{ github.event.pull_request.user.login }}\nApproved By: ${{ steps.reviewers.outputs.approvers }}'
+              }
+          }
+          with open('payload.json', 'w') as f:
+              json.dump(payload, f)
+          "
+
+          curl -s -X PUT \
+            -H "X-Redmine-API-Key: ${{ secrets.REDMINE_API_KEY }}" \
+            -H "Content-Type: application/json" \
+            -d @payload.json \
+            "$REDMINE_URL/issues/$ISSUE_ID.json"
