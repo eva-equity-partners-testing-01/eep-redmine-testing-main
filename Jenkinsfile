@@ -40,7 +40,7 @@ pipeline {
                 }
 
                 stage('Push to ECR') {
-                    steps { echo "Merge: Push Docker Image to ECR" }
+                    steps { echo "Merge: Push Docker Image to the ECR" }
                 }
 
                 stage('Deploy to Kubernetes') {
