@@ -30,7 +30,7 @@ pipeline {
 
         // 🔹 Post-Merge Pipeline (Develop Branch)
         stage('Post Merge Pipeline') {
-            when { 
+            when {   
                 branch 'develop'
             }
             stages {
